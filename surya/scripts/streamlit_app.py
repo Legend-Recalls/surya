@@ -1,9 +1,11 @@
 import io
 import tempfile
 from typing import List
+import base64
 
 import pypdfium2
 import streamlit as st
+import streamlit.components.v1 as components
 
 from surya.common.surya.schema import TaskNames
 from surya.models import load_predictors
@@ -204,6 +206,110 @@ def page_counter(pdf_file):
     return doc_len
 
 
+# Clipboard paste component
+def clipboard_paste_component():
+    paste_html = """
+    <div id="paste-area" style="
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+        background-color: #f9f9f9;
+        margin: 10px 0;
+        cursor: pointer;
+    ">
+        <p style="margin: 0; color: #666;">
+            📋 Click here and press <strong>Ctrl+V</strong> (or Cmd+V) to paste an image
+        </p>
+        <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">
+            Paste area is active - ready to receive images
+        </p>
+    </div>
+    <script>
+        const pasteArea = document.getElementById('paste-area');
+        
+        // Make the area focusable
+        pasteArea.setAttribute('tabindex', '0');
+        
+        // Focus on click
+        pasteArea.addEventListener('click', function() {
+            this.focus();
+            this.style.borderColor = '#4CAF50';
+            this.style.backgroundColor = '#f0f8f0';
+        });
+        
+        // Reset style on blur
+        pasteArea.addEventListener('blur', function() {
+            this.style.borderColor = '#ccc';
+            this.style.backgroundColor = '#f9f9f9';
+        });
+        
+        // Handle paste event
+        pasteArea.addEventListener('paste', function(e) {
+            e.preventDefault();
+            const items = e.clipboardData.items;
+            
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const blob = items[i].getAsFile();
+                    const reader = new FileReader();
+                    
+                    reader.onload = function(event) {
+                        const base64Data = event.target.result;
+                        // Send data back to Streamlit
+                        window.parent.postMessage({
+                            type: 'streamlit:setComponentValue',
+                            value: base64Data
+                        }, '*');
+                        
+                        // Visual feedback
+                        pasteArea.innerHTML = '<p style="color: #4CAF50; margin: 0;">✅ Image pasted successfully!</p>';
+                        setTimeout(() => {
+                            pasteArea.innerHTML = '<p style="margin: 0; color: #666;">📋 Click here and press <strong>Ctrl+V</strong> (or Cmd+V) to paste another image</p><p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">Paste area is active - ready to receive images</p>';
+                        }, 2000);
+                    };
+                    
+                    reader.readAsDataURL(blob);
+                    break;
+                }
+            }
+        });
+        
+        // Also handle document-level paste
+        document.addEventListener('paste', function(e) {
+            const items = e.clipboardData.items;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    e.preventDefault();
+                    const blob = items[i].getAsFile();
+                    const reader = new FileReader();
+                    
+                    reader.onload = function(event) {
+                        const base64Data = event.target.result;
+                        window.parent.postMessage({
+                            type: 'streamlit:setComponentValue',
+                            value: base64Data
+                        }, '*');
+                        
+                        pasteArea.innerHTML = '<p style="color: #4CAF50; margin: 0;">✅ Image pasted successfully!</p>';
+                        setTimeout(() => {
+                            pasteArea.innerHTML = '<p style="margin: 0; color: #666;">📋 Click here and press <strong>Ctrl+V</strong> (or Cmd+V) to paste another image</p><p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">Paste area is active - ready to receive images</p>';
+                        }, 2000);
+                    };
+                    
+                    reader.readAsDataURL(blob);
+                    break;
+                }
+            }
+        });
+        
+        // Auto-focus on load
+        pasteArea.focus();
+    </script>
+    """
+    return components.html(paste_html, height=100)
+
+
 st.set_page_config(layout="wide")
 col1, col2 = st.columns([0.5, 0.5])
 
@@ -224,26 +330,38 @@ Notes:
 Find the project [here](https://github.com/VikParuchuri/surya).
 """)
 
-# Add clipboard paste functionality
-st.sidebar.markdown("### Upload Options")
-st.sidebar.markdown("📁 Upload a file **OR** 📋 Paste an image (Ctrl+V)")
+# Initialize session state for pasted image
+if 'pasted_image' not in st.session_state:
+    st.session_state.pasted_image = None
 
-# Camera input for clipboard paste
-clipboard_image = st.sidebar.camera_input("Or paste image from clipboard (Ctrl+V here)", key="clipboard")
+# Clipboard paste area in sidebar
+with st.sidebar:
+    st.markdown("### 📋 Paste Image from Clipboard")
+    pasted_data = clipboard_paste_component()
+    
+    # Store pasted image in session state
+    if pasted_data:
+        st.session_state.pasted_image = pasted_data
+    
+    st.markdown("### 📁 Or Upload File")
+    in_file = st.file_uploader(
+        "PDF file or image:", type=["pdf", "png", "jpg", "jpeg", "gif", "webp"]
+    )
 
-in_file = st.sidebar.file_uploader(
-    "PDF file or image:", type=["pdf", "png", "jpg", "jpeg", "gif", "webp"]
-)
-
-# Priority: use clipboard image if available, otherwise use file uploader
-if clipboard_image is not None:
-    in_file = clipboard_image
-    st.sidebar.success("✅ Image pasted from clipboard!")
+# Process pasted image
+if st.session_state.pasted_image and not in_file:
+    # Convert base64 to BytesIO object
+    base64_data = st.session_state.pasted_image.split(',')[1]
+    image_data = base64.b64decode(base64_data)
+    in_file = io.BytesIO(image_data)
+    in_file.name = "pasted_image.png"
+    in_file.type = "image/png"
+    st.sidebar.success("✅ Using pasted image")
 
 if in_file is None:
     st.stop()
 
-filetype = in_file.type
+filetype = in_file.type if hasattr(in_file, 'type') else "image/png"
 page_count = None
 if "pdf" in filetype:
     page_count = page_counter(in_file)
@@ -346,10 +464,11 @@ if run_table_rec:
 if run_ocr_errors:
     if "pdf" not in filetype:
         st.error("This feature only works with PDFs.")
-    label, results = ocr_errors(in_file, page_count)
-    with col1:
-        st.write(label)
-        st.json(results)
+    else:
+        label, results = ocr_errors(in_file, page_count)
+        with col1:
+            st.write(label)
+            st.json(results)
 
 with col2:
     st.image(pil_image, caption="Uploaded Image", use_container_width=True)
