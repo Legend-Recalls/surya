@@ -219,13 +219,26 @@ Notes:
 - This works best on documents with printed text.
 - For OCR, the formatting (math, italics, etc) will not show up in the image preview, but it will show up in the returned text lines.
 - If OCR doesn't work, try changing the resolution of your image (increase if below 2048px width, otherwise decrease).
+- **You can paste images directly using Ctrl+V (or Cmd+V on Mac)!**
 
 Find the project [here](https://github.com/VikParuchuri/surya).
 """)
 
+# Add clipboard paste functionality
+st.sidebar.markdown("### Upload Options")
+st.sidebar.markdown("📁 Upload a file **OR** 📋 Paste an image (Ctrl+V)")
+
+# Camera input for clipboard paste
+clipboard_image = st.sidebar.camera_input("Or paste image from clipboard (Ctrl+V here)", key="clipboard")
+
 in_file = st.sidebar.file_uploader(
     "PDF file or image:", type=["pdf", "png", "jpg", "jpeg", "gif", "webp"]
 )
+
+# Priority: use clipboard image if available, otherwise use file uploader
+if clipboard_image is not None:
+    in_file = clipboard_image
+    st.sidebar.success("✅ Image pasted from clipboard!")
 
 if in_file is None:
     st.stop()
